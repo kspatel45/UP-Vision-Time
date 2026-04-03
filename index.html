@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UP Vision Staff Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+          "lucide-react": "https://esm.sh/lucide-react@0.294.0",
+          "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+          "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+          "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+        }
+      }
+    </script>
+</head>
+<body class="bg-slate-50 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+          Clock, Calendar, DollarSign, Users, MapPin, 
+          LogOut, AlertTriangle, FileText, Plus, Trash2, 
+          X, Edit2, CalendarDays, ChevronLeft, ChevronRight, Download, FileSpreadsheet, Check
+        } from 'lucide-react';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+        import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore';
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyBKEsUgw9AJPYgD64D1XDkI4NHAD-5J8AQ",
+          authDomain: "up-vision-staff-management.firebaseapp.com",
+          projectId: "up-vision-staff-management",
+          storageBucket: "up-vision-staff-management.firebasestorage.app",
+          messagingSenderId: "961577049763",
+          appId: "1:961577049763:web:21ab84b2f31e699c54a916"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const getCol = (name) => collection(db, 'artifacts', 'up-vision-staff-management', 'public', 'data', name);
+
+        function App() {
+          const [user, setUser] = useState(null);
+          const [loggedInProfile, setLoggedInProfile] = useState(null);
+          const [activeTab, setActiveTab] = useState('dashboard');
+          const [locations, setLocations] = useState([]);
+          const [staff, setStaff] = useState([]);
+          const [punches, setPunches] = useState([]);
+          const [shifts, setShifts] = useState([]);
+
+          useEffect(() => {
+            signInAnonymously(auth);
+            onAuthStateChanged(auth, (u) => setUser(u));
+          }, []);
+
+          useEffect(() => {
+            if (!user) return;
+            onSnapshot(getCol('locations'), (s) => setLocations(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(getCol('staff'), (s) => setStaff(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(getCol('punches'), (s) => setPunches(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(getCol('shifts'), (s) => setShifts(s.docs.map(d => ({id: d.id, ...d.data()}))));
+          }, [user]);
+
+          const handleLogin = (profile) => {
+            setLoggedInProfile(profile);
+            setActiveTab('dashboard');
+          };
+
+          if (!loggedInProfile) return <LoginScreen locations={locations} staff={staff} onLogin={handleLogin} />;
+
+          return (
+            <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
+              <Sidebar user={loggedInProfile} activeTab={activeTab} setActiveTab={setActiveTab} onLogout={() => setLoggedInProfile(null)} />
+              <main className="flex-1 p-4 md:p-10 overflow-y-auto">
+                <div className="max-w-full mx-auto">
+                  {activeTab === 'dashboard' && <Dashboard user={loggedInProfile} punches={punches} />}
+                  {activeTab === 'schedule' && <TimeGridSchedule user={loggedInProfile} shifts={shifts} staff={staff} />}
+                  {activeTab === 'pay' && <EarningsTab user={loggedInProfile} punches={punches} staff={staff} />}
+                  {activeTab === 'staff' && <StaffManager user={loggedInProfile} staff={staff} locations={locations} />}
+                  {activeTab === 'settings' && <LocationsManager user={loggedInProfile} locations={locations} />}
+                </div>
+              </main>
+            </div>
+          );
+        }
+
+        const LoginScreen = ({ locations, staff, onLogin }) => {
+          const [locId, setLocId] = useState('');
+          const [uid, setUid] = useState('');
+          const [pw, setPw] = useState('');
+          const [err, setErr] = useState('');
+          const [time, setTime] = useState(new Date());
+
+          useEffect(() => {
+            const timer = setInterval(() => setTime(new Date()), 1000);
+            return () => clearInterval(timer);
+          }, []);
+
+          const submitLogin = (e) => {
+            e.preventDefault();
+            const found = staff.find(s => s.username?.toLowerCase() === uid.toLowerCase() && s.password === pw);
+            if (found) {
+               if (found.role?.includes('admin') || found.locationId === locId) onLogin(found);
+               else setErr('Access Denied.');
+            } else setErr('Invalid Credentials.');
+          };
+
+          return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
+              <div className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-md text-center">
+                <div className="mb-8">
+                  <div className="text-6xl font-black text-slate-900 tracking-tighter">
+                    {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </div>
+                  <div className="text-slate-400 font-bold mt-2 uppercase text-xs tracking-widest">{time.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+                </div>
+                <h1 className="text-2xl font-black text-blue-600 mb-8 uppercase italic">UP VISION</h1>
+                {err && <div className="mb-6 p-4 bg-red-50 text-red-600 rounded-xl text-sm font-bold">{err}</div>}
+                <form onSubmit={submitLogin} className="space-y-4">
+                  <select required className="w-full bg-slate-50 border-2 p-4 rounded-2xl font-bold" value={locId} onChange={e=>setLocId(e.target.value)}>
+                    <option value="">Select Workplace</option>
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  <input required className="w-full bg-slate-50 border-2 p-4 rounded-2xl font-bold" placeholder="Username" value={uid} onChange={e=>setUid(e.target.value)} />
+                  <input required type="password" className="w-full bg-slate-50 border-2 p-4 rounded-2xl font-bold" placeholder="Password" value={pw} onChange={e=>setPw(e.target.value)} />
+                  <button type="submit" className="w-full bg-slate-900 text-white font-black py-5 rounded-2xl shadow-xl">Sign In</button>
+                </form>
+              </div>
+            </div>
+          );
+        };
+
+        const Sidebar = ({ user, activeTab, setActiveTab, onLogout }) => {
+          const menu = [
+            { id: 'dashboard', label: 'Punch Clock', icon: Clock, roles: ['employee', 'supervisor', 'admin_manager', 'admin_viewer'] },
+            { id: 'schedule', label: 'Schedule', icon: CalendarDays, roles: ['employee', 'supervisor', 'admin_manager', 'admin_viewer'] },
+            // EARNINGS TAB NOW RESTRICTED TO ADMINS ONLY (HIDDEN FROM SUPERVISOR & EMPLOYEE)
+            { id: 'pay', label: 'Earnings', icon: DollarSign, roles: ['admin_manager', 'admin_viewer'] },
+            { id: 'staff', label: 'Staffing', icon: Users, roles: ['admin_manager', 'admin_viewer'] },
+            { id: 'settings', label: 'Workplaces', icon: MapPin, roles: ['admin_manager'] },
+          ];
+          return (
+            <aside className="w-full md:w-72 bg-slate-900 text-slate-300 flex flex-col shrink-0">
+              <div className="p-8 border-b border-slate-800/50">
+                <h2 className="text-xl font-black text-white uppercase italic">UP VISION</h2>
+              </div>
+              <nav className="flex-1 p-6 space-y-2">
+                {menu.filter(m => m.roles.includes(user.role)).map(item => (
+                  <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center px-4 py-4 rounded-xl text-sm font-bold transition-all ${activeTab === item.id ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}>
+                    <item.icon className="w-5 h-5 mr-3" /> {item.label}
+                  </button>
+                ))}
+              </nav>
+              <button onClick={onLogout} className="p-8 text-left text-sm font-bold flex items-center"><LogOut className="w-5 h-5 mr-3" /> Sign Out</button>
+            </aside>
+          );
+        };
+
+        const TimeGridSchedule = ({ user, shifts, staff }) => {
+          const [baseDate, setBaseDate] = useState(new Date());
+          const [showAdd, setShowAdd] = useState(false);
+          const [selectedStaffIds, setSelectedStaffIds] = useState([]);
+          const [selectedDates, setSelectedDates] = useState([]);
+          const [newShift, setNewShift] = useState({ startTime: '08:00', endTime: '16:00' });
+          const isManager = user.role === 'admin_manager' || user.role === 'supervisor';
+
+          const timeIntervals = useMemo(() => {
+            const slots = [];
+            for (let t = 8 * 60; t < 26 * 60; t += 30) {
+              const h = Math.floor(t / 60) % 24; const m = t % 60;
+              const timeStr = `${h === 0 ? 12 : h > 12 ? h - 12 : h}:${m === 0 ? '00' : '30'} ${h >= 12 ? 'PM' : 'AM'}`;
+              slots.push({ label: timeStr, value: t, time: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}` });
+            }
+            return slots;
+          }, []);
+
+          const weekDates = useMemo(() => {
+            const start = new Date(baseDate); start.setDate(start.getDate() - start.getDay());
+            return Array.from({length: 7}, (_, i) => {
+              const d = new Date(start); d.setDate(d.getDate() + i);
+              return d.toISOString().split('T')[0];
+            });
+          }, [baseDate]);
+
+          const getEmployeeForSlot = (date, slotMinutes) => {
+            return shifts.filter(s => {
+              if (s.date !== date) return false;
+              const [sH, sM] = s.startTime.split(':').map(Number);
+              const [eH, eM] = s.endTime.split(':').map(Number);
+              let startTotal = sH * 60 + sM; let endTotal = eH * 60 + eM;
+              if (endTotal <= startTotal) endTotal += 1440;
+              return slotMinutes >= startTotal && slotMinutes < endTotal;
+            }).map(s => ({ id: s.id, name: staff.find(st => st.id === s.userId)?.name }));
+          };
+
+          const handleBulkSave = async () => {
+            if (selectedStaffIds.length === 0 || selectedDates.length === 0) return alert("Select at least one person and one date.");
+            const batch = writeBatch(db);
+            selectedStaffIds.forEach(uid => {
+              selectedDates.forEach(date => {
+                const docRef = doc(getCol('shifts'));
+                batch.set(docRef, { userId: uid, date, startTime: newShift.startTime, endTime: newShift.endTime });
+              });
+            });
+            await batch.commit();
+            setShowAdd(false);
+            setSelectedStaffIds([]);
+            setSelectedDates([]);
+          };
+
+          const toggleSelection = (list, setList, val) => {
+            setList(prev => prev.includes(val) ? prev.filter(x => x !== val) : [...prev, val]);
+          };
+
+          return (
+            <div className="space-y-6">
+              <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic">Schedule</h1>
+                <div className="flex items-center gap-3">
+                   <button onClick={()=>setBaseDate(new Date(baseDate.setDate(baseDate.getDate()-7)))} className="p-3 bg-white border rounded-xl shadow-sm"><ChevronLeft/></button>
+                   <span className="font-bold text-slate-600">Week of {weekDates[0]}</span>
+                   <button onClick={()=>setBaseDate(new Date(baseDate.setDate(baseDate.getDate()+7)))} className="p-3 bg-white border rounded-xl shadow-sm"><ChevronRight/></button>
+                   {isManager && <button onClick={()=>setShowAdd(true)} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2"><Plus/> Fast Add</button>}
+                </div>
+              </header>
+
+              {showAdd && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-50 p-6">
+                  <div className="bg-white p-10 rounded-[2.5rem] w-full max-w-2xl shadow-2xl">
+                    <h2 className="text-3xl font-black mb-2 italic">Fast Shift Creator</h2>
+                    <div className="space-y-6 mt-8">
+                       <div>
+                         <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Select Staff</label>
+                         <div className="flex flex-wrap gap-2">
+                           {staff.map(s => (
+                             <button key={s.id} onClick={()=>toggleSelection(selectedStaffIds, setSelectedStaffIds, s.id)} className={`px-4 py-2 rounded-xl text-xs font-black border-2 transition-all ${selectedStaffIds.includes(s.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                               {s.name}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Select Dates</label>
+                         <div className="grid grid-cols-7 gap-2">
+                           {weekDates.map(d => (
+                             <button key={d} onClick={()=>toggleSelection(selectedDates, setSelectedDates, d)} className={`py-3 rounded-xl text-xs font-black border-2 transition-all ${selectedDates.includes(d) ? 'bg-slate-900 border-slate-900 text-white' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                               {new Date(d+"T00:00:00").toLocaleDateString('en-US', {weekday:'short'})}<br/>{new Date(d+"T00:00:00").getDate()}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+                       <div className="grid grid-cols-2 gap-4">
+                         <input type="time" className="border-2 p-4 rounded-xl font-bold" value={newShift.startTime} onChange={e=>setNewShift({...newShift, startTime:e.target.value})} />
+                         <input type="time" className="border-2 p-4 rounded-xl font-bold" value={newShift.endTime} onChange={e=>setNewShift({...newShift, endTime:e.target.value})} />
+                       </div>
+                       <div className="flex gap-4">
+                         <button onClick={()=>{setShowAdd(false); setSelectedStaffIds([]); setSelectedDates([]);}} className="flex-1 py-4 font-black text-slate-400 uppercase text-xs">Cancel</button>
+                         <button onClick={handleBulkSave} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black">Create Shifts</button>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="overflow-auto max-h-[75vh] rounded-[2rem] border-2 border-slate-100 shadow-sm bg-white">
+                <table className="w-full border-collapse table-fixed min-w-[1200px]">
+                  <thead className="sticky top-0 z-10 bg-slate-900 text-white">
+                    <tr>
+                      <th className="w-32 p-4 text-[10px] font-black uppercase opacity-50">Time Slot</th>
+                      {weekDates.map(d => (
+                        <th key={d} className="p-4 border-l border-slate-800">
+                          <div className="text-[10px] opacity-40 uppercase font-black">{new Date(d+"T00:00:00").toLocaleDateString('en-US', {weekday:'long'})}</div>
+                          <div className="text-xl font-black italic">{new Date(d+"T00:00:00").getDate()}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {timeIntervals.map(slot => (
+                      <tr key={slot.value} className="group hover:bg-slate-50/50">
+                        <td className="p-3 text-center text-[11px] font-black text-slate-400 bg-slate-50 sticky left-0 z-10 border-r">{slot.label}</td>
+                        {weekDates.map(d => {
+                          const emps = getEmployeeForSlot(d, slot.value);
+                          return (
+                            <td key={d} 
+                                onClick={() => { if(isManager && emps.length === 0) { setSelectedDates([d]); setNewShift({...newShift, startTime: slot.time}); setShowAdd(true); } }}
+                                className={`p-2 border-l border-slate-100 min-h-[50px] text-center ${emps.length > 0 ? 'bg-blue-50/30' : 'cursor-pointer'}`}>
+                               {emps.map((emp, i) => (
+                                 <div key={i} className="flex items-center justify-between text-[10px] font-black text-blue-600 bg-white border-2 border-blue-100 rounded-xl py-2 px-3 shadow-sm mb-1">
+                                   <span className="truncate">{emp.name}</span>
+                                   {isManager && <button onClick={async(e)=>{e.stopPropagation(); if(confirm('Remove?')) await deleteDoc(doc(getCol('shifts'), emp.id));}} className="text-slate-300 hover:text-red-500 ml-1"><X className="w-3 h-3"/></button>}
+                                 </div>
+                               ))}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        };
+
+        const EarningsTab = ({ user, punches, staff }) => {
+          const [period, setPeriod] = useState('');
+          const isFullAdmin = user.role === 'admin_manager' || user.role === 'admin_viewer';
+
+          const calc = (uid, start, end) => {
+            const filtered = punches.filter(p => { const d = new Date(p.timestamp); return p.userId === uid && d >= start && d <= end; });
+            let ms = 0, st = null;
+            filtered.sort((a,b)=>a.timestamp - b.timestamp).forEach(p => { if(p.type === 'in') st = p.timestamp; else if(p.type === 'out' && st) { ms += (p.timestamp - st); st = null; }});
+            const hrs = ms / 36e5;
+            const rate = staff.find(s => s.id === uid)?.hourlyRate || 16.55;
+            const gross = hrs * rate;
+            return { hrs, gross, net: gross*0.7242 };
+          };
+
+          const stats = useMemo(() => {
+            const now = new Date();
+            const startYear = new Date(now.getFullYear(), 0, 1);
+            const startMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const endMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59);
+            const startWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const dueStart = now.getDate() <= 14 ? new Date(now.getFullYear(), now.getMonth(), 1) : new Date(now.getFullYear(), now.getMonth(), 15);
+            return {
+              ytd: calc(user.id, startYear, now).gross,
+              lastMonth: calc(user.id, startMonth, endMonth).gross,
+              lastWeek: calc(user.id, startWeek, now).gross,
+              due: calc(user.id, dueStart, now).gross
+            };
+          }, [punches, user.id]);
+
+          const periods = useMemo(() => {
+            const list = []; let d = new Date();
+            for(let i=0; i<12; i++){
+              const m = d.toLocaleString('default', { month: 'long' });
+              list.push({ id: `${d.getFullYear()}-${d.getMonth()}-14`, label: `${m} 1st - 14th`, s: 1, e: 14 });
+              list.push({ id: `${d.getFullYear()}-${d.getMonth()}-31`, label: `${m} 15th - End`, s: 15, e: 31 });
+              d.setMonth(d.getMonth() - 1);
+            }
+            return list;
+          }, []);
+
+          return (
+            <div className="space-y-8">
+              <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic">Earnings Overview</h1>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'YTD Earnings', val: stats.ytd, color: 'text-blue-600', bg: 'bg-blue-50' },
+                  { label: 'Last Month', val: stats.lastMonth, color: 'text-purple-600', bg: 'bg-purple-50' },
+                  { label: 'Last 7 Days', val: stats.lastWeek, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                  { label: 'Current Due', val: stats.due, color: 'text-orange-600', bg: 'bg-orange-50' },
+                ].map(card => (
+                  <div key={card.label} className={`${card.bg} p-6 rounded-[2.5rem] border-2 border-white shadow-sm`}>
+                    <div className="text-[10px] font-black uppercase text-slate-400 mb-1">{card.label}</div>
+                    <div className={`text-2xl font-black ${card.color}`}>${card.val.toFixed(2)}</div>
+                  </div>
+                ))}
+              </div>
+
+              {isFullAdmin && (
+                <div className="bg-white p-8 rounded-[2rem] border-2 border-slate-100 space-y-4">
+                  <h2 className="text-xl font-black flex items-center gap-2 text-emerald-600"><FileSpreadsheet/> Bulk Payroll Export</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <select className="border-2 p-4 rounded-xl font-bold" onChange={e=>setExp({...exp, userId:e.target.value})}><option value="">All Staff</option>{staff.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+                    <input type="date" className="border-2 p-4 rounded-xl font-bold" onChange={e=>setExp({...exp, start:e.target.value})} />
+                    <input type="date" className="border-2 p-4 rounded-xl font-bold" onChange={e=>setExp({...exp, end:e.target.value})} />
+                    <button onClick={()=>{
+                      const sD = new Date(exp.start); const eD = new Date(exp.end);
+                      let csv = "Name,Hours,Gross,Net\n";
+                      staff.forEach(s => {
+                        const p = calc(s.id, sD, eD); csv += `${s.name},${p.hrs.toFixed(2)},${p.gross.toFixed(2)},${p.net.toFixed(2)}\n`;
+                      });
+                      const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href=url; a.download=`Payroll.csv`; a.click();
+                    }} className="bg-emerald-600 text-white rounded-xl font-black">Export CSV</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white p-10 rounded-[2.5rem] border-2 border-slate-100 max-w-lg">
+                <h2 className="text-2xl font-black mb-6 italic tracking-tighter">Historical Statements</h2>
+                <select className="w-full border-2 p-5 rounded-2xl font-bold mb-4 outline-none" value={period} onChange={e=>setPeriod(e.target.value)}>
+                   <option value="">Choose Period...</option>{periods.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+                <button disabled={!period} onClick={()=>{
+                   const p = periods.find(x=>x.id===period); const d = new Date();
+                   const s = new Date(d.getFullYear(), parseInt(period.split('-')[1]), p.s); const e = new Date(d.getFullYear(), parseInt(period.split('-')[1]), p.e, 23, 59);
+                   const st = calc(user.id, s, e); const {jsPDF} = window.jspdf; const doc = new jsPDF();
+                   doc.setFontSize(22); doc.text("UP VISION PAY STUB", 105, 30, {align:'center'});
+                   doc.autoTable({ startY: 60, head:[['Item','Amount']], body:[['Gross', `$${st.gross.toFixed(2)}`],['Net Pay', `$${st.net.toFixed(2)}`]] });
+                   doc.save(`PayStub_${user.name}.pdf`);
+                }} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black disabled:opacity-50">Generate PDF Statement</button>
+              </div>
+            </div>
+          );
+        };
+
+        const Dashboard = ({ user, punches }) => {
+          const todayStr = new Date().toISOString().split('T')[0];
+          const myPunches = punches.filter(p => p.userId === user.id && p.date === todayStr).sort((a,b) => b.timestamp - a.timestamp);
+          const isPunchedIn = myPunches.length > 0 && myPunches[0].type === 'in';
+          return (
+            <div className="space-y-10">
+              <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic">Punch Clock</h1>
+              <div className="bg-white rounded-[3rem] p-16 shadow-2xl border-4 border-slate-50 text-center">
+                <div className="text-7xl font-black mb-4 text-slate-900 tracking-tighter">{new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                <div className="text-slate-400 font-bold mb-12 uppercase tracking-[0.2em] text-xs">{new Date().toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'})}</div>
+                <button onClick={async()=>await addDoc(getCol('punches'), { userId: user.id, userName: user.name, type: isPunchedIn ? 'out' : 'in', timestamp: Date.now(), date: todayStr })} className={`w-full max-w-md py-10 rounded-[2.5rem] text-3xl font-black text-white shadow-2xl transition-all ${isPunchedIn ? 'bg-red-500 shadow-red-500/40' : 'bg-emerald-500 shadow-emerald-500/40'}`}>
+                  {isPunchedIn ? 'Punch Out' : 'Punch In'}
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        const StaffManager = ({ user, staff, locations }) => {
+          const [showAdd, setShowAdd] = useState(false);
+          const [editingId, setEditingId] = useState(null);
+          const [form, setForm] = useState({ name:'', username:'', password:'', role:'employee', hourlyRate:16.55, locationId:locations[0]?.id || '' });
+          const isFullAdmin = user.role === 'admin_manager';
+
+          const handleSave = async (e) => {
+            e.preventDefault();
+            if (editingId) await updateDoc(doc(getCol('staff'), editingId), form);
+            else await addDoc(getCol('staff'), form);
+            setShowAdd(false); setEditingId(null);
+          };
+
+          return (
+            <div className="space-y-8">
+              <div className="flex justify-between items-center">
+                <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic">Staffing</h1>
+                {isFullAdmin && <button onClick={()=>{setShowAdd(!showAdd); setEditingId(null);}} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-xl"><Plus/></button>}
+              </div>
+              {showAdd && (
+                <form onSubmit={handleSave} className="bg-white p-10 rounded-[2.5rem] border grid grid-cols-1 md:grid-cols-3 gap-6 shadow-xl">
+                  <input required className="border-2 p-4 rounded-xl font-bold" placeholder="Name" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
+                  <input required className="border-2 p-4 rounded-xl font-bold" placeholder="Username" value={form.username} onChange={e=>setForm({...form, username:e.target.value})} />
+                  <input required type="password" className="border-2 p-4 rounded-xl font-bold" placeholder="Password" value={form.password} onChange={e=>setForm({...form, password:e.target.value})} />
+                  <input required type="number" step="0.01" className="border-2 p-4 rounded-xl font-bold" value={form.hourlyRate} onChange={e=>setForm({...form, hourlyRate:parseFloat(e.target.value)})} />
+                  <select className="border-2 p-4 rounded-xl font-bold" value={form.locationId} onChange={e=>setForm({...form, locationId:e.target.value})}>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+                  <select className="border-2 p-4 rounded-xl font-bold" value={form.role} onChange={e=>setForm({...form, role:e.target.value})}><option value="employee">Employee</option><option value="supervisor">Supervisor</option><option value="admin_manager">Admin Manager</option></select>
+                  <button type="submit" className="md:col-span-3 bg-blue-600 text-white py-5 rounded-2xl font-black">Save Staff</button>
+                </form>
+              )}
+              <div className="bg-white rounded-[2rem] border overflow-hidden shadow-sm">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr className="border-b"><th className="px-8 py-6">Member</th><th className="px-8 py-6">Rate</th><th className="px-8 py-6">Role</th><th className="px-8 py-6 text-right">Actions</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {staff.map(s => (
+                      <tr key={s.id} className="hover:bg-slate-50/50">
+                        <td className="px-8 py-6 font-black text-slate-900">{s.name}</td>
+                        <td className="px-8 py-6 font-bold text-slate-700">${s.hourlyRate?.toFixed(2)}/hr</td>
+                        <td className="px-8 py-6 uppercase text-[10px] font-black text-blue-600">{s.role}</td>
+                        <td className="px-8 py-6 text-right">
+                          {isFullAdmin && (
+                            <div className="flex justify-end gap-2">
+                               <button onClick={()=>{setEditingId(s.id); setForm(s); setShowAdd(true);}} className="p-3 text-slate-300 hover:text-blue-600"><Edit2 className="w-5 h-5"/></button>
+                               <button onClick={async() => { if(confirm('Delete?')) await deleteDoc(doc(getCol('staff'), s.id)) }} className="p-3 text-slate-300 hover:text-red-500"><Trash2 className="w-5 h-5"/></button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        };
+
+        const LocationsManager = ({ user, locations }) => {
+          const [newName, setNewName] = useState('');
+          return (
+            <div className="space-y-8">
+               <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic">Workplaces</h1>
+               <form onSubmit={async(e)=>{e.preventDefault(); await addDoc(getCol('locations'), {name:newName}); setNewName('');}} className="flex gap-3 max-w-md"><input required className="flex-1 border-2 p-4 rounded-xl font-bold" placeholder="New Location..." value={newName} onChange={e=>setNewName(e.target.value)} /><button type="submit" className="bg-blue-600 text-white px-8 rounded-xl font-black shadow-lg">Add</button></form>
+               <div className="bg-white rounded-[2rem] border overflow-hidden max-w-md shadow-sm">
+                 {locations.map(l => (<div key={l.id} className="p-6 border-b flex justify-between items-center group font-bold"><span>{l.name}</span><button onClick={async()=>await deleteDoc(doc(getCol('locations'), l.id))} className="text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100"><X/></button></div>))}
+               </div>
+            </div>
+          );
+        };
+
+        const root = createRoot(document.getElementById('root')); root.render(<App />);
+    </script>
+</body>
+</html>
