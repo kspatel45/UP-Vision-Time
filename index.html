@@ -66,12 +66,29 @@
           }, []);
 
           useEffect(() => {
-            if (!user) return;
-            onSnapshot(getCol('locations'), (s) => setLocations(s.docs.map(d => ({id: d.id, ...d.data()}))));
-            onSnapshot(getCol('staff'), (s) => setStaff(s.docs.map(d => ({id: d.id, ...d.data()}))));
-            onSnapshot(getCol('punches'), (s) => setPunches(s.docs.map(d => ({id: d.id, ...d.data()}))));
-            onSnapshot(getCol('shifts'), (s) => setShifts(s.docs.map(d => ({id: d.id, ...d.data()}))));
-          }, [user]);
+  if (!user) return;
+
+  // Listen for the most recent shift that hasn't been closed
+  const q = query(
+    collection(db, "shifts"),
+    where("userId", "==", user.uid),
+    where("status", "==", "open"), // Add a 'status' field when punching in
+    limit(1)
+  );
+
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    if (!snapshot.empty) {
+      const activeDoc = snapshot.docs[0];
+      setActiveShiftId(activeDoc.id);
+      setHasPunchedIn(true);
+    } else {
+      setActiveShiftId(null);
+      setHasPunchedIn(false);
+    }
+  });
+
+  return () => unsubscribe();
+}, [user]);
 
           const handleLogin = (profile) => {
             setLoggedInProfile(profile);
