@@ -35,7 +35,7 @@
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-        import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore';
+        import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, query, where, writeBatch, orderBy, limit } from 'firebase/firestore';
 
         const firebaseConfig = {
           apiKey: "AIzaSyBKEsUgw9AJPYgD64D1XDkI4NHAD-5J8AQ",
@@ -66,29 +66,12 @@
           }, []);
 
           useEffect(() => {
-  if (!user) return;
-
-  // Listen for the most recent shift that hasn't been closed
-  const q = query(
-    collection(db, "shifts"),
-    where("userId", "==", user.uid),
-    where("status", "==", "open"), // Add a 'status' field when punching in
-    limit(1)
-  );
-
-  const unsubscribe = onSnapshot(q, (snapshot) => {
-    if (!snapshot.empty) {
-      const activeDoc = snapshot.docs[0];
-      setActiveShiftId(activeDoc.id);
-      setHasPunchedIn(true);
-    } else {
-      setActiveShiftId(null);
-      setHasPunchedIn(false);
-    }
-  });
-
-  return () => unsubscribe();
-}, [user]);
+            if (!user) return;
+            onSnapshot(getCol('locations'), (s) => setLocations(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(getCol('staff'), (s) => setStaff(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(getCol('punches'), (s) => setPunches(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(getCol('shifts'), (s) => setShifts(s.docs.map(d => ({id: d.id, ...d.data()}))));
+          }, [user]);
 
           const handleLogin = (profile) => {
             setLoggedInProfile(profile);
@@ -163,7 +146,6 @@
           const menu = [
             { id: 'dashboard', label: 'Punch Clock', icon: Clock, roles: ['employee', 'supervisor', 'admin_manager', 'admin_viewer'] },
             { id: 'schedule', label: 'Schedule', icon: CalendarDays, roles: ['employee', 'supervisor', 'admin_manager', 'admin_viewer'] },
-            // EARNINGS TAB NOW RESTRICTED TO ADMINS ONLY (HIDDEN FROM SUPERVISOR & EMPLOYEE)
             { id: 'pay', label: 'Earnings', icon: DollarSign, roles: ['admin_manager', 'admin_viewer'] },
             { id: 'staff', label: 'Staffing', icon: Users, roles: ['admin_manager', 'admin_viewer'] },
             { id: 'settings', label: 'Workplaces', icon: MapPin, roles: ['admin_manager'] },
@@ -204,9 +186,13 @@
           }, []);
 
           const weekDates = useMemo(() => {
-            const start = new Date(baseDate); start.setDate(start.getDate() - start.getDay());
+            const start = new Date(baseDate); 
+            const day = start.getDay();
+            // Monday start logic:[cite: 5]
+            const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+            start.setDate(diff);
             return Array.from({length: 7}, (_, i) => {
-              const d = new Date(start); d.setDate(d.getDate() + i);
+              const d = new Date(start); d.setDate(start.getDate() + i);
               return d.toISOString().split('T')[0];
             });
           }, [baseDate]);
@@ -333,6 +319,7 @@
         };
 
         const EarningsTab = ({ user, punches, staff }) => {
+          const [exp, setExp] = useState({ userId: '', start: '', end: '' });
           const [period, setPeriod] = useState('');
           const isFullAdmin = user.role === 'admin_manager' || user.role === 'admin_viewer';
 
@@ -359,7 +346,7 @@
               lastWeek: calc(user.id, startWeek, now).gross,
               due: calc(user.id, dueStart, now).gross
             };
-          }, [punches, user.id]);
+          }, [punches, user.id, staff]);
 
           const periods = useMemo(() => {
             const list = []; let d = new Date();
@@ -429,17 +416,40 @@
 
         const Dashboard = ({ user, punches }) => {
           const todayStr = new Date().toISOString().split('T')[0];
-          const myPunches = punches.filter(p => p.userId === user.id && p.date === todayStr).sort((a,b) => b.timestamp - a.timestamp);
-          const isPunchedIn = myPunches.length > 0 && myPunches[0].type === 'in';
+          
+          // FIX: Sort all user punches to find the absolute latest one regardless of date[cite: 5]
+          const mySortedPunches = punches
+            .filter(p => p.userId === user.id)
+            .sort((a,b) => b.timestamp - a.timestamp);
+            
+          const isPunchedIn = mySortedPunches.length > 0 && mySortedPunches[0].type === 'in';
+
+          const handlePunch = async () => {
+            await addDoc(getCol('punches'), { 
+              userId: user.id, 
+              userName: user.name, 
+              type: isPunchedIn ? 'out' : 'in', 
+              timestamp: Date.now(), 
+              date: todayStr 
+            });
+          };
+
           return (
             <div className="space-y-10">
               <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic">Punch Clock</h1>
               <div className="bg-white rounded-[3rem] p-16 shadow-2xl border-4 border-slate-50 text-center">
                 <div className="text-7xl font-black mb-4 text-slate-900 tracking-tighter">{new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
                 <div className="text-slate-400 font-bold mb-12 uppercase tracking-[0.2em] text-xs">{new Date().toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'})}</div>
-                <button onClick={async()=>await addDoc(getCol('punches'), { userId: user.id, userName: user.name, type: isPunchedIn ? 'out' : 'in', timestamp: Date.now(), date: todayStr })} className={`w-full max-w-md py-10 rounded-[2.5rem] text-3xl font-black text-white shadow-2xl transition-all ${isPunchedIn ? 'bg-red-500 shadow-red-500/40' : 'bg-emerald-500 shadow-emerald-500/40'}`}>
+                <button 
+                  onClick={handlePunch} 
+                  className={`w-full max-w-md py-10 rounded-[2.5rem] text-3xl font-black text-white shadow-2xl transition-all ${isPunchedIn ? 'bg-red-500 shadow-red-500/40' : 'bg-emerald-500 shadow-emerald-500/40'}`}>
                   {isPunchedIn ? 'Punch Out' : 'Punch In'}
                 </button>
+                {isPunchedIn && mySortedPunches[0] && (
+                  <div className="mt-6 text-slate-400 font-bold">
+                    Currently In since: {new Date(mySortedPunches[0].timestamp).toLocaleString()}
+                  </div>
+                )}
               </div>
             </div>
           );
